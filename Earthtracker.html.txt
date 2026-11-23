@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Earth Tracker — Live Nature & Environment Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    background: #071108;
+    color: #e8f5e9;
+  }
+  header {
+    padding: 26px 20px 14px;
+    background: linear-gradient(120deg, #062b16, #0b3d23, #123d24);
+    border-bottom: 1px solid #1d5c36;
+  }
+  h1 { margin: 0; font-size: 30px; letter-spacing: -.5px; }
+  .subtitle { color: #a5d6a7; margin-top: 6px; font-size: 15px; }
+  main { max-width: 1180px; margin: 0 auto; padding: 20px; }
+  .controls {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  input, select, button {
+    padding: 13px 14px;
+    border-radius: 10px;
+    border: 1px solid #2e7d32;
+    background: #0d2016;
+    color: #e8f5e9;
+    font-size: 15px;
+  }
+  button {
+    background: #2e7d32;
+    border: none;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  button:hover { background: #388e3c; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  .card {
+    background: #0d2016;
+    border: 1px solid #245c36;
+    border-radius: 16px;
+    padding: 18px;
+  }
+  .label { color: #a5d6a7; font-size: 13px; text-transform: uppercase; letter-spacing: .7px; }
+  .value { font-size: 32px; font-weight: 800; margin-top: 8px; }
+  .unit { font-size: 15px; color: #a5d6a7; font-weight: 600; }
+  .status { margin-top: 8px; font-size: 13px; color: #c8e6c9; }
+  .alert {
+    border-left: 5px solid #ff8f00;
+    background: #2b2108;
+    padding: 14px 16px;
+    border-radius: 10px;
+    margin-bottom: 18px;
+    display: none;
+  }
+  .alert.bad { border-color: #e53935; background: #2d0f10; }
+  .alert.good { border-color: #43a047; background: #0d2016; }
+  .panels {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 16px;
+  }
+  .panel {
+    background: #0d2016;
+    border: 1px solid #245c36;
+    border-radius: 16px;
+    padding: 18px;
+    min-height: 360px;
+  }
+  #map { height: 320px; border-radius: 12px; }
+  canvas { max-height: 300px; }
+  h2 { margin: 0 0 12px; font-size: 18px; }
+  .footer {
+    text-align: center;
+    color: #81c784;
+    font-size: 13px;
+    padding: 22px;
+    border-top: 1px solid #1d5c36;
+    margin-top: 24px;
+  }
+  .loading { color: #a5d6a7; font-size: 14px; }
+  @media (max-width: 850px) {
+    .controls { grid-template-columns: 1fr; }
+    .panels { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🌍 Earth Tracker</h1>
+  <div class="subtitle">Live weather, air quality, and environmental alerts for any location</div>
+</header>
+
+<main>
+  <div class="controls">
+    <input id="city" placeholder="Enter a city, e.g. Delhi, Mumbai, London" value="Delhi" />
+    <button onclick="loadLocation()">Track location</button>
+    <button onclick="useMyLocation()">Use my location</button>
+  </div>
+
+  <div id="loading" class="loading">Loading environmental data…</div>
+
+  <div id="alertBox" class="alert"></div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">Air Quality Index</div>
+      <div class="value" id="aqi">—</div>
+      <div class="status" id="aqiStatus">Awaiting data</div>
+    </div>
+    <div class="card">
+      <div class="label">PM2.5</div>
+      <div class="value" id="pm25">—</div>
+      <div class="unit">µg/m³</div>
+      <div class="status">Fine particles that can enter the lungs</div>
+    </div>
+    <div class="card">
+      <div class="label">PM10</div>
+      <div class="value" id="pm10">—</div>
+      <div class="unit">µg/m³</div>
+      <div class="status">Coarse dust and particulate pollution</div>
+    </div>
+    <div class="card">
+      <div class="label">Temperature</div>
+      <div class="value" id="temp">—</div>
+      <div class="unit">°C</div>
+      <div class="status" id="weatherStatus">Awaiting data</div>
+    </div>
+  </div>
+
+  <div class="panels">
+    <div class="panel">
+      <h2>Air-quality forecast</h2>
+      <canvas id="airChart"></canvas>
+    </div>
+    <div class="panel">
+      <h2>Location map</h2>
+      <div id="map"></div>
+      <div class="status" id="coords" style="margin-top:10px"></div>
+    </div>
+  </div>
+</main>
+
+<div class="footer">
+  Data: Open-Meteo weather and air-quality APIs. This dashboard provides environmental awareness, not medical or emergency advice.
+</div>
+
+<script>
+const state = { chart: null, map: null, marker: null };
+
+const cityCoordinates = {
+  "delhi": [28.6139, 77.2090],
+  "mumbai": [19.0760, 72.8777],
+  "bengaluru": [12.9716, 77.5946],
+  "london": [51.5074, -0.1278],
+  "new york": [40.7128, -74.0060]
+};
+
+function initMap(lat, lon, name) {
+  if (!state.map) {
+    state.map = L.map("map").setView([lat, lon], 10);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap contributors"
+    }).addTo(state.map);
+  }
+  if (state.marker) state.map.removeLayer(state.marker);
+  state.marker = L.marker([lat, lon]).addTo(state.map)
+    .bindPopup(`<b>${name}</b><br>Environmental tracking point`);
+  state.map.setView([lat, lon], 10);
+  document.getElementById("coords").textContent = `Coordinates: ${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+}
+
+function setCard(id, value, status, color) {
+  document.getElementById(id).textContent = value;
+  if (status) document.getElementById(id + "Status").textContent = status;
+  if (color) document.getElementById(id).style.color = color;
+}
+
+function aqiCategory(aqi) {
+  if (aqi <= 50) return ["Good", "#66bb6a"];
+  if (aqi <= 100) return ["Moderate", "#ffee58"];
+  if (aqi <= 150) return ["Unhealthy for sensitive groups", "#ffa726"];
+  if (aqi <= 200) return ["Unhealthy", "#ef5350"];
+  if (aqi <= 300) return ["Very unhealthy", "#ab47bc"];
+  return ["Hazardous", "#e53935"];
+}
+
+function showAlert(message, type) {
+  const box = document.getElementById("alertBox");
+  box.style.display = "block";
+  box.className = "alert " + type;
+  box.textContent = message;
+}
+
+async function geocode(city) {
+  const key = city.trim().toLowerCase();
+  if (cityCoordinates[key]) {
+    return { lat: cityCoordinates[key][0], lon: cityCoordinates[key][1], name: city };
+  }
+  const response = await fetch(
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`
+  );
+  const data = await response.json();
+  if (!data.results || !data.results.length) throw new Error("Location not found");
+  const place = data.results[0];
+  return {
+    lat: place.latitude,
+    lon: place.longitude,
+    name: `${place.name}${place.country ? ", " + place.country : ""}`
+  };
+}
+
+async function loadLocation() {
+  const city = document.getElementById("city").value || "Delhi";
+  document.getElementById("loading").style.display = "block";
+  document.getElementById("alertBox").style.display = "none";
+
+  try {
+    const place = await geocode(city);
+    initMap(place.lat, place.lon, place.name);
+
+    const weatherUrl =
+      `https://api.open-meteo.com/v1/forecast?latitude=${place.lat}&longitude=${place.lon}` +
+      `&current=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m&timezone=auto`;
+
+    const airUrl =
+      `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${place.lat}&longitude=${place.lon}` +
+      `&hourly=pm2_5,pm10,us_aqi&forecast_days=3&timezone=auto`;
+
+    const [weatherResponse, airResponse] = await Promise.all([
+      fetch(weatherUrl),
+      fetch(airUrl)
+    ]);
+
+    const weather = await weatherResponse.json();
+    const air = await airResponse.json();
+
+    const current = weather.current;
+    setCard("temp", Math.round(current.temperature_2m), 
+      `Humidity ${current.relative_humidity_2m}% · Wind ${current.wind_speed_10m} km/h`);
+
+    const times = air.hourly.time;
+    const aqiSeries = air.hourly.us_aqi;
+    const pm25Series = air.hourly.pm2_5;
+    const pm10Series = air.hourly.pm10;
+
+    const now = new Date();
+    let nearest = 0;
+    let smallestGap = Infinity;
+
+    times.forEach((time, index) => {
+      const gap = Math.abs(new Date(time) - now);
+      if (gap < smallestGap) {
+        smallestGap = gap;
+        nearest = index;
+      }
+    });
+
+    const currentAqi = Math.round(aqiSeries[nearest]);
+    const [category, color] = aqiCategory(currentAqi);
+
+    setCard("aqi", currentAqi, category, color);
+    setCard("pm25", Math.round(pm25Series[nearest]));
+    setCard("pm10", Math.round(pm10Series[nearest]));
+
+    if (currentAqi > 150) {
+      showAlert(`⚠️ Poor air quality in ${place.name}: AQI ${currentAqi} (${category}). Limit outdoor exertion and consider a mask if sensitive to pollution.`, "bad");
+    } else if (currentAqi > 100) {
+      showAlert(`🟠 Moderate air quality in ${place.name}: AQI ${currentAqi}. Sensitive groups should reduce prolonged outdoor activity.`, "");
+    } else {
+      showAlert(`✅ Air quality in ${place.name} is ${category.toLowerCase()} (AQI ${currentAqi}).`, "good");
+    }
+
+    const labels = times.slice(nearest, nearest + 24).map(time =>
+      new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    );
+
+    if (state.chart) state.chart.destroy();
+
+    state.chart = new Chart(document.getElementById("airChart"), {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "US AQI",
+            data: aqiSeries.slice(nearest, nearest + 24),
+            borderColor: "#66bb6a",
+            backgroundColor: "rgba(102,187,106,.18)",
+            fill: true,
+            tension: .35
+          },
+          {
+            label: "PM2.5",
+            data: pm25Series.slice(nearest, nearest + 24),
+            borderColor: "#ffb74d",
+            tension: .35
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { labels: { color: "#c8e6c9" } } },
+        scales: {
+          x: { ticks: { color: "#a5d6a7" }, grid: { color: "#1b3d28" } },
+          y: { ticks: { color: "#a5d6a7" }, grid: { color: "#1b3d28" } }
+        }
+      }
+    });
+
+    document.getElementById("loading").style.display = "none";
+  } catch (error) {
+    document.getElementById("loading").style.display = "none";
+    showAlert("Could not load data. Please check the city name and internet connection.", "bad");
+  }
+}
+
+function useMyLocation() {
+  if (!navigator.geolocation) {
+    showAlert("Your browser does not support location services.", "bad");
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    position => {
+      const lat = position.coords.latitude;
+      const lon = position.coords.longitude;
+      document.getElementById("city").value = "My location";
+      initMap(lat, lon, "My location");
+      loadByCoordinates(lat, lon, "My location");
+    },
+    () => showAlert("Location permission denied. Enter a city instead.", "bad")
+  );
+}
+
+async function loadByCoordinates(lat, lon, name) {
+  document.getElementById("city").value = name;
+  document.getElementById("loading").style.display = "block";
+  document.getElementById("alertBox").style.display = "none";
+
+  try {
+    const weatherUrl =
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&current=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m&timezone=auto`;
+
+    const airUrl =
+      `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}` +
+      `&hourly=pm2_5,pm10,us_aqi&forecast_days=3&timezone=auto`;
+
+    const [weatherResponse, airResponse] = await Promise.all([fetch(weatherUrl), fetch(airUrl)]);
+    const weather = await weatherResponse.json();
+    const air = await airResponse.json();
+
+    const current = weather.current;
+    setCard("temp", Math.round(current.temperature_2m),
+      `Humidity ${current.relative_humidity_2m}% · Wind ${current.wind_speed_10m} km/h`);
+
+    const times = air.hourly.time;
+    const aqiSeries = air.hourly.us_aqi;
+    const pm25Series = air.hourly.pm2_5;
+    const pm10Series = air.hourly.pm10;
+
+    const now = new Date();
+    let nearest = 0;
+    let smallestGap = Infinity;
+
+    times.forEach((time, index) => {
+      const gap = Math.abs(new Date(time) - now);
+      if (gap < smallestGap) {
+        smallestGap = gap;
+        nearest = index;
+      }
+    });
+
+    const currentAqi = Math.round(aqiSeries[nearest]);
+    const [category, color] = aqiCategory(currentAqi);
+
+    setCard("aqi", currentAqi, category, color);
+    setCard("pm25", Math.round(pm25Series[nearest]));
+    setCard("pm10", Math.round(pm10Series[nearest]));
+
+    if (currentAqi > 150) {
+      showAlert(`⚠️ Poor air quality in ${name}: AQI ${currentAqi} (${category}).`, "bad");
+    } else if (currentAqi > 100) {
+      showAlert(`🟠 Moderate air quality in ${name}: AQI ${currentAqi}.`, "");
+    } else {
+      showAlert(`✅ Air quality in ${name} is ${category.toLowerCase()} (AQI ${currentAqi}).`, "good");
+    }
+
+    const labels = times.slice(nearest, nearest + 24).map(time =>
+      new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    );
+
+    if (state.chart) state.chart.destroy();
+
+    state.chart = new Chart(document.getElementById("airChart"), {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "US AQI",
+            data: aqiSeries.slice(nearest, nearest + 24),
+            borderColor: "#66bb6a",
+            backgroundColor: "rgba(102,187,106,.18)",
+            fill: true,
+            tension: .35
+          },
+          {
+            label: "PM2.5",
+            data: pm25Series.slice(nearest, nearest + 24),
+            borderColor: "#ffb74d",
+            tension: .35
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { labels: { color: "#c8e6c9" } } },
+        scales: {
+          x: { ticks: { color: "#a5d6a7" }, grid: { color: "#1b3d28" } },
+          y: { ticks: { color: "#a5d6a7" }, grid: { color: "#1b3d28" } }
+        }
+      }
+    });
+
+    document.getElementById("loading").style.display = "none";
+  } catch (error) {
+    document.getElementById("loading").style.display = "none";
+    showAlert("Could not load environmental data for this location.", "bad");
+  }
+}
+
+window.addEventListener("load", () => {
+  initMap(28.6139, 77.2090, "Delhi");
+  loadLocation();
+});
+</script>
+
+</body>
+</html>
